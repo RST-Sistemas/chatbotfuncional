@@ -9,13 +9,25 @@
 
 [[redirects]]
   from = "/*"
-  to = "/.netlify/functions/api/:splat"
+  to = "/.netlify/functions/api"
   status = 200
   force = true
 
 [functions]
   node_bundler = "esbuild"
-  included_files = ["dist/**/*"]
+  external_node_modules = [
+    "@nestjs/core", 
+    "@nestjs/common", 
+    "@nestjs/platform-express", 
+    "@prisma/client", 
+    "express", 
+    "serverless-http",
+    "link-preview-js",
+    "class-transformer",
+    "jimp",
+    "qrcode-terminal",
+    "sharp"
+  ]
 
 [[headers]]
   for = "/*"

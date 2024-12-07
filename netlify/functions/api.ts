@@ -1,68 +1,62 @@
-import { Handler } from '@netlify/functions';
+import { Handler, HandlerEvent, HandlerContext } from '@netlify/functions';
+import serverless from 'serverless-http';
+import express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../../src/app.module';
-import { ExpressAdapter } from '@nestjs/platform-express';
-import express from 'express';
 
-let app;
+// Fallback para importaciones dinámicas
+const dynamicImportFallback = {
+  linkPreview: () => ({ default: {} }),
+  classTransformer: () => ({ storage: {} }),
+  jimp: () => ({}),
+  qrcodeTerminal: () => ({}),
+  sharp: () => ({})
+};
 
-async function bootstrap() {
-  const expressApp = express();
-  const adapter = new ExpressAdapter(expressApp);
-  
-  app = await NestFactory.create(AppModule, adapter);
+// Sobrescribir require dinámico
+const originalRequire = require;
+(global as any).require = (moduleName: string) => {
+  switch (moduleName) {
+    case 'link-preview-js':
+      return dynamicImportFallback.linkPreview();
+    case 'class-transformer/storage':
+      return dynamicImportFallback.classTransformer();
+    case 'jimp':
+      return dynamicImportFallback.jimp();
+    case 'qrcode-terminal':
+      return dynamicImportFallback.qrcodeTerminal();
+    case 'sharp':
+      return dynamicImportFallback.sharp();
+    default:
+      return originalRequire(moduleName);
+  }
+};
+
+let cachedHandler: any = null;
+
+async function createHandler() {
+  const app = await NestFactory.create(AppModule);
   app.enableCors();
   await app.init();
-  
-  return expressApp;
+
+  const expressApp = express();
+  expressApp.use(await serverless(app.getHttpAdapter().getInstance()));
+
+  return serverless(expressApp);
 }
 
-export const handler: Handler = async (event, context) => {
+export const handler: Handler = async (event: HandlerEvent, context: HandlerContext) => {
   try {
-    const expressApp = app ? app.getHttpAdapter().getInstance() : await bootstrap();
-    
-    // Convert event to express request
-    const request = {
-      method: event.httpMethod,
-      path: event.path,
-      headers: event.headers,
-      body: event.body,
-      query: event.queryStringParameters || {},
-    };
+    if (!cachedHandler) {
+      cachedHandler = await createHandler();
+    }
 
-    return new Promise((resolve, reject) => {
-      const response = {
-        statusCode: 200,
-        headers: {},
-        body: '',
-      };
-
-      expressApp(request, response, (err) => {
-        if (err) {
-          console.error('Error:', err);
-          reject({
-            statusCode: 500,
-            body: JSON.stringify({ error: 'Internal Server Error' }),
-          });
-        } else {
-          resolve({
-            statusCode: response.statusCode,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Headers': 'Content-Type',
-              'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-            },
-            body: response.body,
-          });
-        }
-      });
-    });
+    return await cachedHandler(event, context);
   } catch (error) {
-    console.error('Bootstrap Error:', error);
+    console.error('Netlify Function Error:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Server Initialization Error' }),
+      body: JSON.stringify({ error: 'Internal Server Error', details: error.message })
     };
   }
 };
